@@ -1,0 +1,982 @@
+/**
+*
+* God Tier Ad Copy Agent 2025 - Claude Version
+*
+* Written by Kudakwashe Chinhara (kudakwashe.chinhara@gmail.com) for God Tier Ads
+* Modified to use Anthropic's Claude API
+* Updated to support latest Claude models (March 2025) by taylor thain (get@somemarketing.ca)
+*
+*/
+
+// Paste this code in your ad account. It does not interact with your ads at all.
+//
+// Make a copy of this Google Sheet and paste the URL of your copy in between the single quotes below "https://docs.google.com/spreadsheets/d/1pnFtVaKayfKN_ZNFtzKutZKI169e91J5Ey_skikBIOI/edit?usp=sharing"
+
+const SHEET_URL = ''
+
+// Authorize and preview the script as normal.
+
+// DO NOT CHANGE THE CODE BELOW THIS LINE (unless you know what you are doing).
+
+// Cache for storing the successful model between API calls
+let SUCCESSFUL_MODEL = null;
+
+// Tab names
+const SETTINGS_TAB = 'Settings';
+const PROMPTS_TAB = 'Prompts';
+const INPUTS_TAB = 'Inputs';
+const OUTPUTS_TAB = 'Outputs';
+const COSTS_TAB = 'Costs';
+
+// Claude models - with flexible fallback options
+const MODELS = {
+  // Primary options - using base model names for flexibility
+  'better': 'claude-3-opus',       // Higher quality
+  'cheaper': 'claude-3-sonnet',    // Less expensive, good balance
+  'fastest': 'claude-3-haiku',     // Fastest option
+  
+  // Additional fallbacks if needed
+  'latest_fallback': 'claude-3-sonnet', // Fallback to Sonnet
+  'classic_fallback': 'claude-3-haiku'  // Fallback to Haiku
+}
+
+function main() {
+    Logger.log('Starting gtaCopyAgent - Claude Version');
+    try {
+        let start = new Date();
+        
+        // Get the model choice from a named range or default to 'cheaper'
+        let modelChoice = readNamedRanges('model_choice') || 'cheaper'; 
+        
+        // Make sure it's a valid option
+        if (!MODELS[modelChoice]) {
+            Logger.log(`Warning: Invalid model choice "${modelChoice}". Valid options are: ${Object.keys(MODELS).join(', ')}`);
+            modelChoice = 'cheaper'; // Fallback to cheaper if invalid
+        }
+        
+        // Try to get the model, with fallback
+        let model = MODELS[modelChoice];
+        Logger.log('Using model: ' + model);
+        Logger.log('Model choice: ' + modelChoice);
+
+        // Get settings
+        Logger.log('Reading settings');
+        const settings = {
+            businessName: readNamedRanges('business_name'),
+            businessType: readNamedRanges('business_type'), // Read from named range, with fallback
+            apiKey: readNamedRanges('anthropicAPIkey'),
+            modelChoice: modelChoice
+        };
+        Logger.log('Business Name: ' + settings.businessName);
+        Logger.log('Business Type: ' + settings.businessType);
+        Logger.log('Model Choice: ' + settings.modelChoice);
+
+        // Get prompts
+        Logger.log('Reading prompts');
+        const prompts = {
+            headline: readNamedRanges('headline_prompt'),
+            descriptions: readNamedRanges('descriptions_prompt'),
+            webHeadlines: readNamedRanges('web_headlines_prompt')
+        };
+        Logger.log('All prompts loaded successfully');
+
+        // Get inputs
+        Logger.log('Reading inputs');
+        const inputs = {
+            clarity: readNamedRanges('clarity'),
+            keywords: readNamedRanges('keywords'),
+            reviews: readNamedRanges('reviews'),
+            usps: readNamedRanges('usps'),
+            headlines: readNamedRanges('headlines')
+        };
+        Logger.log('All inputs loaded successfully');
+
+        // Generate and write outputs
+        Logger.log('Generating ad copy');
+        const { totalTokens, totalCost } = generateAdCopy(settings, prompts, inputs);
+        
+        // Calculate and log duration
+        let end = new Date();
+        let duration = (end - start) / 1000;
+        Logger.log(`Script completed in ${duration} seconds`);
+        Logger.log(`Total tokens used: ${totalTokens}`);
+        Logger.log(`Total cost: $${totalCost.toFixed(4)}`);
+
+    } catch (error) {
+        Logger.log('An error occurred: ' + error);
+        Logger.log('Stack trace: ' + error.stack);
+    }
+}
+
+function readNamedRanges(rangeName) {
+    Logger.log(`Reading named range: ${rangeName}`);
+    try {
+        let sheet = SpreadsheetApp.openByUrl(SHEET_URL);
+        let range = sheet.getRangeByName(rangeName);
+        
+        if (!range) {
+            Logger.log(`Warning: Named range '${rangeName}' not found`);
+            return null;
+        }
+
+        // Get all values in the range
+        const values = range.getValues();
+        
+        // Settings and Prompts tabs have single-cell named ranges
+        if (rangeName === 'business_name' || 
+            rangeName === 'anthropicAPIkey' ||
+            rangeName.includes('_prompt')) {
+            Logger.log(`Reading single-cell value from ${rangeName}`);
+            return values[0][0];
+        }
+        
+        // Inputs tab has columns with headers
+        const content = values
+            .slice(1)  // Skip header row
+            .flat()
+            .filter(value => value && value.toString().trim().length > 0)
+            .join('\n');
+
+        Logger.log(`Successfully read value from ${rangeName}`);
+        return content;
+    } catch (error) {
+        Logger.log(`Error reading named range ${rangeName}: ${error}`);
+        throw error;
+    }
+}
+
+function generateAdCopy(settings, prompts, inputs) {
+    Logger.log('Starting ad copy generation');
+    Logger.log('Raw inputs:');
+    Logger.log(JSON.stringify(inputs, null, 2));
+    
+    let totalTokens = 0;
+    let totalCost = 0;
+    const model = MODELS[settings.modelChoice];
+
+    try {
+        // Process headlines first
+        Logger.log('Generating headlines');
+        
+        const headlineContext = {
+            businessName: settings.businessName,
+            businessType: settings.businessType,
+            businessOverview: inputs.clarity,
+            targetKeywords: formatArrayInput(inputs.keywords, 'keywords'),
+            customerReviews: formatArrayInput(inputs.reviews, 'reviews'),
+            uniqueSellingPoints: formatArrayInput(inputs.usps, 'usps')
+        };
+
+        // Check if we should use optimized headline prompt
+        const useOptHeadline = readNamedRanges('use_opt_headline_prompt') === true;
+        const headlinePrompt = useOptHeadline ? 
+            readNamedRanges('opt_headline_prompt') : 
+            prompts.headline;
+        
+        Logger.log(`Using ${useOptHeadline ? 'optimized' : 'original'} headline prompt`);
+
+        const { response, tokens, cost } = callAnthropic(
+            settings.apiKey,
+            headlinePrompt,
+            headlineContext,
+            model
+        );
+
+        // Get critique for headlines
+        Logger.log('Getting critique for headlines');
+        const headlineCritiqueContext = {
+            originalPrompt: prompts.headline,
+            inputData: headlineContext,
+            llmResponse: response
+        };
+        
+        const { response: headlineCritique, tokens: critTokens, cost: critCost } = callAnthropic(
+            settings.apiKey,
+            readNamedRanges('critique_prompt'),
+            headlineCritiqueContext,
+            model
+        );
+        
+        writeCritique('Headlines Critique', headlineCritique);
+        totalTokens += critTokens;
+        totalCost += critCost;
+        writeCosts('Headlines Critique', critTokens, critCost, model);
+
+        // Generate optimized headline prompt
+        Logger.log('Generating optimized headline prompt');
+        const headlineEngContext = {
+            originalPrompt: prompts.headline,
+            critique: headlineCritique
+        };
+        
+        const { response: headlineOptPrompt, tokens: engTokens, cost: engCost } = callAnthropic(
+            settings.apiKey,
+            readNamedRanges('engineer_prompt'),
+            headlineEngContext,
+            model
+        );
+        
+        writeOptimizedPrompt('opt_headline_prompt', headlineOptPrompt);
+        totalTokens += engTokens;
+        totalCost += engCost;
+        writeCosts('Headlines Prompt Engineering', engTokens, engCost, model);
+
+        // Parse the response and write to outputs
+        const adCopy = parseResponse(response);
+        writeOutputs(adCopy);
+        totalTokens += tokens;
+        totalCost += cost;
+        writeCosts('Headlines', tokens, cost, model);
+
+        // Now generate descriptions
+        Logger.log('Generating descriptions');
+        const descContext = {
+            businessName: settings.businessName,
+            businessType: settings.businessType,
+            businessOverview: inputs.clarity,
+            targetKeywords: formatArrayInput(inputs.keywords, 'keywords'),
+            customerReviews: formatArrayInput(inputs.reviews, 'reviews'),
+            uniqueSellingPoints: formatArrayInput(inputs.usps, 'usps')
+        };
+
+        // Check if we should use optimized descriptions prompt
+        const useOptDescriptions = readNamedRanges('use_opt_descriptions_prompt') === true;
+        const descriptionsPrompt = useOptDescriptions ? 
+            readNamedRanges('opt_descriptions_prompt') : 
+            prompts.descriptions;
+        
+        Logger.log(`Using ${useOptDescriptions ? 'optimized' : 'original'} descriptions prompt`);
+
+        const { response: descResponse, tokens: descTokens, cost: descCost } = callAnthropic(
+            settings.apiKey,
+            descriptionsPrompt,
+            descContext,
+            model
+        );
+
+        // Get critique for descriptions
+        Logger.log('Getting critique for descriptions');
+        const descCritiqueContext = {
+            originalPrompt: prompts.descriptions,
+            inputData: descContext,
+            llmResponse: descResponse
+        };
+        
+        const { response: descCritique, tokens: descCritTokens, cost: descCritCost } = callAnthropic(
+            settings.apiKey,
+            readNamedRanges('critique_prompt'),
+            descCritiqueContext,
+            model
+        );
+        
+        writeCritique('Descriptions Critique', descCritique);
+        totalTokens += descCritTokens;
+        totalCost += descCritCost;
+        writeCosts('Descriptions Critique', descCritTokens, descCritCost, model);
+
+        // Generate optimized descriptions prompt
+        Logger.log('Generating optimized descriptions prompt');
+        const descEngContext = {
+            originalPrompt: prompts.descriptions,
+            critique: descCritique
+        };
+        
+        const { response: descOptPrompt, tokens: descEngTokens, cost: descEngCost } = callAnthropic(
+            settings.apiKey,
+            readNamedRanges('engineer_prompt'),
+            descEngContext,
+            model
+        );
+        
+        writeOptimizedPrompt('opt_descriptions_prompt', descOptPrompt);
+        totalTokens += descEngTokens;
+        totalCost += descEngCost;
+        writeCosts('Descriptions Prompt Engineering', descEngTokens, descEngCost, model);
+
+        const descriptions = parseDescriptions(descResponse);
+        writeOutputs(descriptions);
+        totalTokens += descTokens;
+        totalCost += descCost;
+        writeCosts('Descriptions', descTokens, descCost, model);
+
+        // Now generate web headlines
+        Logger.log('Generating web headlines');
+        const webContext = {
+            ...headlineContext,
+            googleAdsHeadlines: formatArrayInput(inputs.headlines, 'headlines')
+        };
+
+        // Check if we should use optimized web headlines prompt
+        const useOptWebHeadlines = readNamedRanges('use_opt_web_headlines_prompt') === true;
+        const webHeadlinesPrompt = useOptWebHeadlines ? 
+            readNamedRanges('opt_web_headlines_prompt') : 
+            prompts.webHeadlines;
+        
+        Logger.log(`Using ${useOptWebHeadlines ? 'optimized' : 'original'} web headlines prompt`);
+
+        const { response: webResponse, tokens: webTokens, cost: webCost } = callAnthropic(
+            settings.apiKey,
+            webHeadlinesPrompt,
+            webContext,
+            model
+        );
+
+        // Get critique for web headlines
+        Logger.log('Getting critique for web headlines');
+        const webCritiqueContext = {
+            originalPrompt: prompts.webHeadlines,
+            inputData: webContext,
+            llmResponse: webResponse
+        };
+        
+        const { response: webCritique, tokens: webCritTokens, cost: webCritCost } = callAnthropic(
+            settings.apiKey,
+            readNamedRanges('critique_prompt'),
+            webCritiqueContext,
+            model
+        );
+        
+        writeCritique('Web Headlines Critique', webCritique);
+        totalTokens += webCritTokens;
+        totalCost += webCritCost;
+        writeCosts('Web Headlines Critique', webCritTokens, webCritCost, model);
+
+        // Generate optimized web headlines prompt
+        Logger.log('Generating optimized web headlines prompt');
+        const webEngContext = {
+            originalPrompt: prompts.webHeadlines,
+            critique: webCritique
+        };
+        
+        const { response: webOptPrompt, tokens: webEngTokens, cost: webEngCost } = callAnthropic(
+            settings.apiKey,
+            readNamedRanges('engineer_prompt'),
+            webEngContext,
+            model
+        );
+        
+        writeOptimizedPrompt('opt_web_headlines_prompt', webOptPrompt);
+        totalTokens += webEngTokens;
+        totalCost += webEngCost;
+        writeCosts('Web Headlines Prompt Engineering', webEngTokens, webEngCost, model);
+
+        // Parse the API response and update each item with 'Web Headline' category
+        let webHeadlines = parseResponse(webResponse);
+        webHeadlines = webHeadlines.map(item => ({ ...item, category: "Web Headline" }));
+        writeOutputs(webHeadlines);
+        totalTokens += webTokens;
+        totalCost += webCost;
+        writeCosts('Web Headline', webTokens, webCost, model);
+
+        Logger.log(`Generation complete. Total tokens: ${totalTokens}, Total cost: $${totalCost.toFixed(4)}`);
+        return { totalTokens, totalCost };
+
+    } catch (error) {
+        Logger.log('Error in generateAdCopy: ' + error);
+        Logger.log('Stack trace: ' + error.stack);
+        throw error;
+    }
+}
+
+function formatArrayInput(input, type) {
+    Logger.log(`Formatting ${type} input`);
+    Logger.log(`Raw input: ${JSON.stringify(input)}`);
+    
+    if (!input) {
+        Logger.log(`${type} input is empty or null`);
+        return [];
+    }
+    
+    let result = [];
+    switch(type) {
+        case 'keywords':
+            result = input.split('\n')
+                .map(line => line.trim())
+                .filter(line => line && 
+                    !line.includes('Most Important Keywords') &&
+                    line.length > 0);
+            break;
+            
+        case 'reviews':
+            result = input.split('\n')
+                .map(line => line.trim())
+                .filter(line => line && 
+                    line.length > 10 &&
+                    !line.startsWith('"'))
+                .map(review => review.replace(/["]/g, ''));
+            break;
+            
+        case 'usps':
+            result = input.split('\n')
+                .map(line => line.trim())
+                .filter(line => line && line.length > 0)  // Keep non-empty lines
+                .map(usp => {
+                    // Try to extract content from ** if present
+                    const match = usp.match(/\*\*(.*?)\*\*/);
+                    if (match) {
+                        return match[1].trim();
+                    }
+                    // Otherwise just use the line as is
+                    return usp;
+                })
+                .filter(usp => usp.length > 0);
+            break;
+    }
+    
+    Logger.log(`Formatted ${type} result: ${JSON.stringify(result)}`);
+    return result;
+}
+
+function callAnthropic(apiKey, prompt, context, modelInput) {
+    // If we already found a working model, use it directly
+    // Otherwise, start with the requested model
+    let model = SUCCESSFUL_MODEL || modelInput;
+    
+    // If the model doesn't contain a date version and we don't have a successful model yet,
+    // log that we'll try to find the best available version
+    if (!model.includes("-202") && !SUCCESSFUL_MODEL) {
+        Logger.log(`Using base model name: ${model}. Will try to find the best available version.`);
+    } else if (SUCCESSFUL_MODEL) {
+        Logger.log(`Using previously successful model: ${model}`);
+    }
+    
+    Logger.log(`Calling Anthropic API with model: ${model}`);
+    Logger.log(`Context preview: ${JSON.stringify(context).substring(0, 100)}...`);
+
+    const maxRetries = 3;
+    let attempt = 0;
+    let modelAttempts = [];
+    
+    // Possible model versions to try (from newest to oldest)
+    const tryVersions = function(baseModelName) {
+        switch(baseModelName) {
+            case 'claude-3-opus':
+                return [
+                    'claude-3-opus-20240229',
+                    'claude-3-opus',
+                    'claude-3' // ultimate fallback
+                ];
+            case 'claude-3-sonnet':
+                return [
+                    'claude-3-7-sonnet-20250219', // newest if available
+                    'claude-3-5-sonnet-20240620',
+                    'claude-3-sonnet-20240229',
+                    'claude-3-sonnet',
+                    'claude-3' // ultimate fallback
+                ];
+            case 'claude-3-haiku':
+                return [
+                    'claude-3-5-haiku-20240620',
+                    'claude-3-haiku-20240307',
+                    'claude-3-haiku',
+                    'claude-3' // ultimate fallback
+                ];
+            default:
+                return [modelInput, 'claude-3']; // try as-is then fallback
+        }
+    };
+    
+    // If we already have a successful model, just use that
+    // Otherwise, set up the model attempts list
+    if (SUCCESSFUL_MODEL) {
+        modelAttempts = [SUCCESSFUL_MODEL, 'claude-3']; // first try the successful model, then fallback
+    } else if (model.includes("-202")) {
+        modelAttempts = [model, 'claude-3']; // try specified version, then fallback
+    } else {
+        modelAttempts = tryVersions(model);
+    }
+    
+    let modelIndex = 0;
+    
+    while (attempt < maxRetries) {
+        try {
+            // If we've failed previously, try the next model version
+            if (attempt > 0 && modelIndex < modelAttempts.length - 1) {
+                modelIndex++;
+                model = modelAttempts[modelIndex];
+                Logger.log(`Trying alternative model: ${model}`);
+            }
+            
+            // Anthropic Messages API endpoint
+            const url = 'https://api.anthropic.com/v1/messages';
+            
+            // Construct the conversation
+            const system = prompt;
+            const userContent = JSON.stringify(context);
+            
+            // Headers for Anthropic API
+            const headers = {
+                "x-api-key": apiKey,
+                "anthropic-version": "2023-06-01",
+                "Content-Type": "application/json"
+            };
+            
+            // Payload for Anthropic API
+            const payload = {
+                "model": model,
+                "system": system,
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": userContent
+                    }
+                ],
+                "max_tokens": 4000
+            };
+
+            const options = {
+                "method": "POST",
+                "headers": headers,
+                "payload": JSON.stringify(payload),
+                "muteHttpExceptions": true
+            };
+            
+            // Debug output for API call
+            Logger.log("API Headers:");
+            Logger.log(JSON.stringify(options.headers));
+            Logger.log("API Payload preview:");
+            Logger.log(JSON.stringify(payload).substring(0, 200) + "...");
+
+            const response = UrlFetchApp.fetch(url, options);
+            const responseCode = response.getResponseCode();
+            const responseText = response.getContentText();
+
+            // Log the raw response for debugging
+            Logger.log('Raw API response text:');
+            Logger.log(responseText);
+
+            if (responseCode !== 200) {
+                Logger.log(`Error: Anthropic API request failed with status ${responseCode}.`);
+                Logger.log(`Error details: ${responseText}`);
+                
+                // Check for specific error types and handle them
+                if (responseText.includes("not_found_error") && 
+                    responseText.includes("model:")) {
+                    
+                    Logger.log(`Model ${model} not found, will try alternatives if available.`);
+                    
+                    // If we used a previously successful model that's now failing, clear it
+                    if (model === SUCCESSFUL_MODEL) {
+                        Logger.log(`Previously successful model ${SUCCESSFUL_MODEL} is no longer working, clearing cache.`);
+                        SUCCESSFUL_MODEL = null;
+                    }
+                    
+                    // If we've exhausted all model options
+                    if (modelIndex >= modelAttempts.length - 1 && attempt === maxRetries - 1) {
+                        throw new Error(`All model options failed. Last error: Model ${model} not found.`);
+                    }
+                    
+                    // Try next model right away without waiting
+                    attempt++;
+                    continue;
+                }
+                
+                if (attempt === maxRetries - 1) {
+                    throw new Error(`API request failed with status ${responseCode}: ${responseText}`);
+                }
+                
+                // Exponential backoff for other errors
+                Utilities.sleep(Math.pow(2, attempt) * 1000);
+                attempt++;
+                continue;
+            }
+
+            // Verify we got a valid JSON response
+            let jsonResponse;
+            try {
+                jsonResponse = JSON.parse(responseText);
+            } catch (e) {
+                Logger.log('Failed to parse API response as JSON:');
+                Logger.log(responseText);
+                
+                if (attempt === maxRetries - 1) {
+                    throw new Error('Invalid JSON response from API');
+                }
+                
+                // Exponential backoff
+                Utilities.sleep(Math.pow(2, attempt) * 1000);
+                attempt++;
+                continue;
+            }
+
+            // Verify we got the expected response structure
+            if (!jsonResponse.content?.[0]?.text) {
+                Logger.log('API response missing expected content:');
+                Logger.log(JSON.stringify(jsonResponse));
+                
+                if (attempt === maxRetries - 1) {
+                    throw new Error('API response missing expected content');
+                }
+                
+                // Exponential backoff
+                Utilities.sleep(Math.pow(2, attempt) * 1000);
+                attempt++;
+                continue;
+            }
+
+            // If we get here, the API call was successful
+            // Store the successful model for future calls
+            if (!SUCCESSFUL_MODEL) {
+                SUCCESSFUL_MODEL = model;
+                Logger.log(`Storing successful model ${model} for future API calls`);
+            }
+
+            const responseContent = jsonResponse.content[0].text;
+            
+            // Extract token usage information
+            const inputTokens = jsonResponse.usage?.input_tokens || 0;
+            const outputTokens = jsonResponse.usage?.output_tokens || 0;
+            const totalTokens = inputTokens + outputTokens;
+            
+            const cost = calculateCost(inputTokens, outputTokens, model);
+
+            Logger.log('API call successful');
+            return { 
+                response: responseContent,
+                tokens: totalTokens,
+                cost: cost 
+            };
+
+        } catch (error) {
+            Logger.log(`Attempt ${attempt + 1} failed: ${error}`);
+            
+            if (attempt === maxRetries - 1) {
+                throw error;
+            }
+            
+            // Exponential backoff
+            Utilities.sleep(Math.pow(2, attempt) * 1000);
+            attempt++;
+        }
+    }
+}
+
+function writeOutputs(items) {
+    Logger.log('Starting to write outputs');
+    try {
+        const sheet = SpreadsheetApp.openByUrl(SHEET_URL).getSheetByName(OUTPUTS_TAB);
+        
+        // First check if sheet exists
+        if (!sheet) {
+            throw new Error('Could not find Outputs tab');
+        }
+
+        // Get the last row with content
+        const lastRow = Math.max(1, sheet.getLastRow());
+        
+        // If sheet is empty (only has header), start at row 2
+        // Otherwise, get existing data
+        let existingData = [];
+        if (lastRow > 1) {
+            existingData = sheet.getRange(2, 1, lastRow - 1, 5).getValues();
+        }
+        
+        // Insert new rows after header for our new items
+        if (items.length > 0) {
+            sheet.insertRowsAfter(1, items.length);
+        }
+        
+        // Write new items starting at row 2
+        items.forEach((item, index) => {
+            const label = item.category ? item.category : "Headline";
+            const rowData = [
+                label,
+                item.text,
+                item.characterCount,
+                item.type,
+                item.sentimentScore
+            ];
+            sheet.getRange(2 + index, 1, 1, rowData.length).setValues([rowData]);
+            Logger.log(`Writing to row ${2 + index}: ${JSON.stringify(rowData)}`);
+        });
+        
+        // Write existing data below new items if there is any
+        if (existingData.length > 0 && items.length > 0) {
+            sheet.getRange(2 + items.length, 1, existingData.length, 5).setValues(existingData);
+        }
+        
+        Logger.log(`Successfully wrote ${items.length} items to Outputs tab`);
+    } catch (error) {
+        Logger.log('Error writing outputs: ' + error);
+        throw error;
+    }
+}
+
+function parseResponse(response) {
+    Logger.log('Parsing Anthropic response');
+    try {
+        // Split into lines and filter out empty lines, headers, and separator lines
+        const lines = response.split('\n')
+            .filter(line => {
+                const trimmedLine = line.trim();
+                return trimmedLine && 
+                    line.includes('|') && 
+                    !line.includes('Headline Text') &&
+                    !line.includes('----');
+            });
+        
+        Logger.log(`Found ${lines.length} lines after filtering`);
+        
+        // Validate we have enough headlines
+        if (lines.length < 15) {
+            Logger.log('Warning: Received fewer than 15 headlines from API');
+        }
+        
+        const adCopy = [];
+        
+        // Process headlines
+        for (let i = 0; i < Math.min(15, lines.length); i++) {
+            const line = lines[i];
+            Logger.log(`Processing line: ${line}`);
+            
+            // Split the line by | and trim each part
+            const parts = line.split('|').map(part => part.trim()).filter(part => part);
+            
+            if (parts.length >= 4) {
+                let text = parts[0];
+                // Remove surrounding double quotes if present
+                if(text.startsWith('"') && text.endsWith('"')) {
+                    text = text.slice(1, -1);
+                }
+                const characterCount = text.length;
+                const type = parts[2];
+                const sentimentScore = parseFloat(parts[3]) || 0.8;
+                
+                // Log if headline exceeds character limit
+                if (characterCount > 30) {
+                    Logger.log(`Note: Entry exceeds 30 characters (${characterCount}): ${text}`);
+                }
+                
+                adCopy.push({
+                    text: text,
+                    characterCount: characterCount,
+                    type: type,
+                    sentimentScore: sentimentScore
+                });
+            }
+        }
+
+        Logger.log(`Parsed ${adCopy.length} headlines`);
+        return adCopy;
+    } catch (error) {
+        Logger.log('Error parsing response: ' + error);
+        throw error;
+    }
+}
+
+function parseDescriptions(response) {
+    Logger.log('Parsing descriptions response');
+    try {
+        const lines = response.split('\n')
+            .filter(line => {
+                const trimmedLine = line.trim();
+                return trimmedLine && 
+                       line.includes('|') && 
+                       !line.includes('Description') &&
+                       !line.includes('Headline Text') &&
+                       !line.includes('----');
+            });
+        
+        Logger.log(`Found ${lines.length} description lines after filtering`);
+        
+        const descriptions = [];
+        
+        // Process each description
+        for (let i = 0; i < lines.length; i++) {
+            const line = lines[i];
+            Logger.log(`Processing description line: ${line}`);
+            
+            // Split the line by | and trim each part
+            const parts = line.split('|').map(part => part.trim()).filter(part => part);
+            
+            if (parts.length >= 4) {
+                let text = parts[0];
+                // Remove surrounding double quotes if present
+                if(text.startsWith('"') && text.endsWith('"')) {
+                    text = text.slice(1, -1);
+                }
+                const characterCount = text.length;
+                
+                // Use the type directly from the API response (column 3)
+                const type = parts[2];
+                
+                const sentimentScore = parseFloat(parts[3]) || 0.8;
+                descriptions.push({
+                    text: text,
+                    characterCount: characterCount,
+                    type: type,
+                    category: "Description",
+                    sentimentScore: sentimentScore
+                });
+            } else if (parts.length > 0) { 
+                // Fallback if sentiment score and type columns are missing
+                let text = parts[0];
+                if(text.startsWith('"') && text.endsWith('"')) {
+                    text = text.slice(1, -1);
+                }
+                const characterCount = text.length;
+                
+                // Default to Generic if type is missing
+                const type = "Generic";
+                
+                const sentimentScore = 0.8;  // Fallback sentiment score
+                descriptions.push({
+                    text: text,
+                    characterCount: characterCount,
+                    type: type,
+                    category: "Description",
+                    sentimentScore: sentimentScore
+                });
+            }
+        }
+        
+        Logger.log(`Parsed ${descriptions.length} descriptions`);
+        return descriptions;
+    } catch (error) {
+        Logger.log('Error parsing descriptions: ' + error);
+        throw error;
+    }
+}
+
+function writeCosts(outputType, tokens, cost, model) {
+    try {
+        Logger.log('Writing cost data to Costs tab');
+        const sheet = SpreadsheetApp.openByUrl(SHEET_URL).getSheetByName(COSTS_TAB);
+        
+        // Get current timestamp
+        const timestamp = new Date();
+        
+        // Add new row with cost data
+        const rowData = [
+            outputType,               // Output type
+            tokens,                   // Total Tokens
+            cost.toFixed(4),          // Approx Cost of Report (USD)
+            model,                    // Model Used
+            timestamp                 // Time Stamp
+        ];
+        
+        // Insert at the top after header
+        sheet.insertRowBefore(2);
+        sheet.getRange(2, 1, 1, rowData.length).setValues([rowData]);
+        
+        Logger.log(`Added cost tracking row: Tokens: ${tokens}, Cost: ${cost.toFixed(4)}`);
+    } catch (error) {
+        // Log but don't throw - we don't want cost tracking failures to stop the main flow
+        Logger.log('Error writing to Costs tab: ' + error);
+    }
+}
+
+function calculateCost(inputTokens, outputTokens, model) {
+    Logger.log('Calculating Claude cost');
+
+    // Claude pricing (updated as of March 2025)
+    const PRICING = {
+        // Opus models
+        'claude-3-opus-20240229': { inputCostPerMToken: 15, outputCostPerMToken: 75 },
+        'claude-3-opus': { inputCostPerMToken: 15, outputCostPerMToken: 75 },
+        
+        // Sonnet models
+        'claude-3-7-sonnet-20250219': { inputCostPerMToken: 3.8, outputCostPerMToken: 19 },
+        'claude-3-5-sonnet-20240620': { inputCostPerMToken: 3, outputCostPerMToken: 15 },
+        'claude-3-sonnet-20240229': { inputCostPerMToken: 3, outputCostPerMToken: 15 },
+        'claude-3-sonnet': { inputCostPerMToken: 3, outputCostPerMToken: 15 },
+        
+        // Haiku models
+        'claude-3-5-haiku-20240620': { inputCostPerMToken: 0.25, outputCostPerMToken: 1.25 },
+        'claude-3-haiku-20240307': { inputCostPerMToken: 0.25, outputCostPerMToken: 1.25 },
+        'claude-3-haiku': { inputCostPerMToken: 0.25, outputCostPerMToken: 1.25 },
+        
+        // Generic fallback
+        'claude-3': { inputCostPerMToken: 3, outputCostPerMToken: 15 }
+    };
+
+    // Get pricing for the model
+    let modelPricing = PRICING[model];
+    if (!modelPricing) {
+        // Try to match the model by checking each part of the name
+        if (model.includes('opus')) {
+            modelPricing = PRICING['claude-3-opus'];
+        } else if (model.includes('sonnet')) {
+            // Check if it's specifically Claude 3.7
+            if (model.includes('3-7')) {
+                modelPricing = PRICING['claude-3-7-sonnet-20250219'];
+            } else {
+                modelPricing = PRICING['claude-3-sonnet'];
+            }
+        } else if (model.includes('haiku')) {
+            modelPricing = PRICING['claude-3-haiku'];
+        } else {
+            Logger.log(`Warning: No pricing found for model ${model}, using default Claude pricing`);
+            return ((inputTokens * 3) + (outputTokens * 15)) / 1000000; // Default to Sonnet pricing
+        }
+    }
+
+    // Calculate cost based on input and output tokens
+    const inputCost = (inputTokens * modelPricing.inputCostPerMToken) / 1000000;
+    const outputCost = (outputTokens * modelPricing.outputCostPerMToken) / 1000000;
+    const totalCost = inputCost + outputCost;
+
+    Logger.log(`Input tokens: ${inputTokens}, Output tokens: ${outputTokens}`);
+    Logger.log(`Input cost: ${inputCost.toFixed(4)}, Output cost: ${outputCost.toFixed(4)}`);
+    Logger.log(`Total cost: ${totalCost.toFixed(4)}`);
+    
+    return totalCost;
+}
+
+// Add new function to write critiques
+function writeCritique(critiqueName, critiqueText) {
+    Logger.log(`Writing critique for ${critiqueName}`);
+    try {
+        let sheet = SpreadsheetApp.openByUrl(SHEET_URL);
+        let range = sheet.getRangeByName('critique_output');
+        
+        if (!range) {
+            Logger.log('Warning: critique_output named range not found');
+            return;
+        }
+
+        // Get existing content
+        let existingContent = range.getValue();
+        
+        // Format new critique
+        let formattedCritique = `\n=== ${critiqueName} ===\n${critiqueText}\n`;
+        
+        // Append new critique to existing content
+        let newContent = existingContent ? existingContent + formattedCritique : formattedCritique;
+        
+        // Write to the named range
+        range.setValue(newContent);
+        Logger.log(`Successfully wrote critique for ${critiqueName}`);
+    } catch (error) {
+        Logger.log(`Error writing critique: ${error}`);
+        throw error;
+    }
+}
+
+// Add new function to write optimized prompts
+function writeOptimizedPrompt(rangeName, promptText) {
+    Logger.log(`Writing optimized prompt to ${rangeName}`);
+    try {
+        let sheet = SpreadsheetApp.openByUrl(SHEET_URL);
+        let range = sheet.getRangeByName(rangeName);
+        
+        if (!range) {
+            Logger.log(`Warning: ${rangeName} named range not found`);
+            return;
+        }
+
+        // Clean up the prompt text - ensure it starts with 'Analyze'
+        let cleanedPrompt = promptText.trim();
+        if (!cleanedPrompt.startsWith('Analyze')) {
+            Logger.log('Warning: Optimized prompt does not start with "Analyze", adjusting...');
+            cleanedPrompt = `Analyze ${cleanedPrompt}`;
+        }
+        
+        // Write to the named range
+        range.setValue(cleanedPrompt);
+        Logger.log(`Successfully wrote optimized prompt to ${rangeName}`);
+    } catch (error) {
+        Logger.log(`Error writing optimized prompt: ${error}`);
+        throw error;
+    }
+}
