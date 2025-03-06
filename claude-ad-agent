@@ -31,18 +31,21 @@ const COSTS_TAB = 'Costs';
 // Claude models - with flexible fallback options
 const MODELS = {
     // Primary options will be read from named ranges
-    'better': 'claude-3-opus-20240229',     // Default fallback
-    'cheaper': 'claude-3-sonnet-20240229',  // Default fallback
-    'fastest': 'claude-3-haiku-20240307',   // Default fallback
+    'better': 'claude-3-opus',     // Default fallback
+    'cheaper': 'claude-3-sonnet',  // Default fallback
+    'fastest': 'claude-3-haiku',   // Default fallback
     
     // Additional fallbacks if needed
-    'latest_fallback': 'claude-3-sonnet-20240229',
-    'classic_fallback': 'claude-3-haiku-20240307'
+    'latest_fallback': 'claude-3-sonnet',
+    'classic_fallback': 'claude-3-haiku'
 }
 
 // Add at the top with other constants
 const MODELS_CACHE_KEY = 'CLAUDE_MODELS_CACHE';
 const CACHE_DURATION_HOURS = 24;
+
+// Add at the top with other globals
+let CACHED_MODEL_VERSIONS = null;
 
 // Add this function to handle caching
 function getCachedModels(apiKey) {
@@ -110,9 +113,9 @@ async function getAvailableModels(apiKey) {
 function initializeModels(apiKey) {
     // Default model versions in case API check fails
     const defaultModels = {
-        'better': 'claude-3-opus-20240229',
-        'cheaper': 'claude-3-sonnet-20240229',
-        'fastest': 'claude-3-haiku-20240307'
+        'better': 'claude-3-opus',
+        'cheaper': 'claude-3-sonnet',
+        'fastest': 'claude-3-haiku'
     };
     
     // Try to get latest available models
@@ -263,10 +266,18 @@ function readNamedRanges(rangeName) {
         // Debug output
         Logger.log(`Raw values from ${rangeName}:`, values);
         
+        // Handle model version ranges specifically
+        if (rangeName.includes('_model_version')) {
+            const value = values[0][0];
+            Logger.log(`Model version value from ${rangeName}: ${value}`);
+            // Only return if we have a non-empty value
+            return value && value.toString().trim() ? value : null;
+        }
+        
         // Settings and Prompts tabs have single-cell named ranges
         if (rangeName === 'business_name' || 
             rangeName === 'anthropicAPIkey' ||
-            rangeName === 'model_choice' ||  // Added model_choice here
+            rangeName === 'model_choice' ||
             rangeName.includes('_prompt')) {
             Logger.log(`Reading single-cell value from ${rangeName}`);
             return values[0][0];
@@ -342,7 +353,7 @@ function generateAdCopy(settings, prompts, inputs) {
         writeCritique('Headlines Critique', headlineCritique);
         totalTokens += critTokens;
         totalCost += critCost;
-        writeCosts('Headlines Critique', critTokens, critCost, model);
+        trackCost(critTokens, critCost, response);
 
         // Generate optimized headline prompt
         Logger.log('Generating optimized headline prompt');
@@ -361,14 +372,14 @@ function generateAdCopy(settings, prompts, inputs) {
         writeOptimizedPrompt('opt_headline_prompt', headlineOptPrompt);
         totalTokens += engTokens;
         totalCost += engCost;
-        writeCosts('Headlines Prompt Engineering', engTokens, engCost, model);
+        trackCost(engTokens, engCost, response);
 
         // Parse the response and write to outputs
         const adCopy = parseResponse(response);
         writeOutputs(adCopy);
         totalTokens += tokens;
         totalCost += cost;
-        writeCosts('Headlines', tokens, cost, model);
+        trackCost(tokens, cost, response);
 
         // Now generate descriptions
         Logger.log('Generating descriptions');
@@ -414,7 +425,7 @@ function generateAdCopy(settings, prompts, inputs) {
         writeCritique('Descriptions Critique', descCritique);
         totalTokens += descCritTokens;
         totalCost += descCritCost;
-        writeCosts('Descriptions Critique', descCritTokens, descCritCost, model);
+        trackCost(descCritTokens, descCritCost, response);
 
         // Generate optimized descriptions prompt
         Logger.log('Generating optimized descriptions prompt');
@@ -433,13 +444,13 @@ function generateAdCopy(settings, prompts, inputs) {
         writeOptimizedPrompt('opt_descriptions_prompt', descOptPrompt);
         totalTokens += descEngTokens;
         totalCost += descEngCost;
-        writeCosts('Descriptions Prompt Engineering', descEngTokens, descEngCost, model);
+        trackCost(descEngTokens, descEngCost, response);
 
         const descriptions = parseDescriptions(descResponse);
         writeOutputs(descriptions);
         totalTokens += descTokens;
         totalCost += descCost;
-        writeCosts('Descriptions', descTokens, descCost, model);
+        trackCost(descTokens, descCost, response);
 
         // Now generate web headlines
         Logger.log('Generating web headlines');
@@ -481,7 +492,7 @@ function generateAdCopy(settings, prompts, inputs) {
         writeCritique('Web Headlines Critique', webCritique);
         totalTokens += webCritTokens;
         totalCost += webCritCost;
-        writeCosts('Web Headlines Critique', webCritTokens, webCritCost, model);
+        trackCost(webCritTokens, webCritCost, response);
 
         // Generate optimized web headlines prompt
         Logger.log('Generating optimized web headlines prompt');
@@ -500,7 +511,7 @@ function generateAdCopy(settings, prompts, inputs) {
         writeOptimizedPrompt('opt_web_headlines_prompt', webOptPrompt);
         totalTokens += webEngTokens;
         totalCost += webEngCost;
-        writeCosts('Web Headlines Prompt Engineering', webEngTokens, webEngCost, model);
+        trackCost(webEngTokens, webEngCost, response);
 
         // Parse the API response and update each item with 'Web Headline' category
         let webHeadlines = parseResponse(webResponse);
@@ -508,7 +519,7 @@ function generateAdCopy(settings, prompts, inputs) {
         writeOutputs(webHeadlines);
         totalTokens += webTokens;
         totalCost += webCost;
-        writeCosts('Web Headline', webTokens, webCost, model);
+        trackCost(webTokens, webCost, response);
 
         Logger.log(`Generation complete. Total tokens: ${totalTokens}, Total cost: $${totalCost.toFixed(4)}`);
         return { totalTokens, totalCost };
@@ -578,19 +589,36 @@ function callAnthropic(apiKey, prompt, context, modelInput) {
     const maxRetries = 3;
     let attempt = 0;
     
-    // Get available models from MODELS object (which is updated from sheet)
-    const availableModels = [
-        MODELS['better'],    // opus
-        MODELS['cheaper'],   // sonnet
-        MODELS['fastest']    // haiku
-    ];
+    // Use cached model versions if available, otherwise read from sheet
+    if (!CACHED_MODEL_VERSIONS) {
+        Logger.log('Reading model versions from sheet...');
+        const opusVersion = readNamedRanges('opus_model_version');
+        const sonnetVersion = readNamedRanges('sonnet_model_version');
+        const haikuVersion = readNamedRanges('haiku_model_version');
+        
+        CACHED_MODEL_VERSIONS = [opusVersion, sonnetVersion, haikuVersion].filter(m => m);
+        
+        Logger.log('Updated models from sheet:');
+        Logger.log('Opus:', opusVersion);
+        Logger.log('Sonnet:', sonnetVersion);
+        Logger.log('Haiku:', haikuVersion);
+    }
     
-    Logger.log('Available fallback models:', availableModels);
+    // Use cached versions or fallback to base models
+    const availableModels = CACHED_MODEL_VERSIONS.length > 0 ? 
+        CACHED_MODEL_VERSIONS : 
+        [
+            'claude-3-opus',
+            'claude-3-sonnet',
+            'claude-3-haiku'
+        ];
+    
+    Logger.log('Available models for fallback:', availableModels);
     
     while (attempt < maxRetries) {
         try {
             // If this isn't our first attempt, try the next model in the list
-            if (attempt > 0) {
+            if (attempt > 0 && availableModels[attempt - 1]) {
                 model = availableModels[attempt - 1];
                 Logger.log(`Retrying with model: ${model}`);
             }
@@ -936,31 +964,30 @@ function parseDescriptions(response) {
     }
 }
 
-function writeCosts(outputType, tokens, cost, model) {
+function trackCost(tokens, cost, response = null) {
     try {
-        Logger.log('Writing cost data to Costs tab');
         const sheet = SpreadsheetApp.openByUrl(SHEET_URL).getSheetByName(COSTS_TAB);
+        const timestamp = new Date().toISOString();
         
-        // Get current timestamp
-        const timestamp = new Date();
+        // Only store essential response data
+        const responseData = response ? {
+            model: response.model,
+            stop_reason: response.stop_reason,
+            usage: response.usage
+        } : null;
         
-        // Add new row with cost data
-        const rowData = [
-            outputType,               // Output type
-            tokens,                   // Total Tokens
-            cost.toFixed(4),          // Approx Cost of Report (USD)
-            model,                    // Model Used
-            timestamp                 // Time Stamp
+        const costData = [
+            timestamp,
+            tokens,
+            cost.toFixed(4),
+            responseData ? JSON.stringify(responseData) : ''
         ];
         
-        // Insert at the top after header
-        sheet.insertRowBefore(2);
-        sheet.getRange(2, 1, 1, rowData.length).setValues([rowData]);
-        
+        sheet.appendRow(costData);
         Logger.log(`Added cost tracking row: Tokens: ${tokens}, Cost: ${cost.toFixed(4)}`);
     } catch (error) {
-        // Log but don't throw - we don't want cost tracking failures to stop the main flow
-        Logger.log('Error writing to Costs tab: ' + error);
+        Logger.log(`Error writing to Costs tab: ${error}`);
+        // Continue execution even if cost tracking fails
     }
 }
 
