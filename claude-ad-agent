@@ -578,12 +578,14 @@ function callAnthropic(apiKey, prompt, context, modelInput) {
     const maxRetries = 3;
     let attempt = 0;
     
-    // Define available models in order of preference
+    // Get available models from MODELS object (which is updated from sheet)
     const availableModels = [
-        'claude-3-opus-20240229',
-        'claude-3-sonnet-20240229',
-        'claude-3-haiku-20240307'
+        MODELS['better'],    // opus
+        MODELS['cheaper'],   // sonnet
+        MODELS['fastest']    // haiku
     ];
+    
+    Logger.log('Available fallback models:', availableModels);
     
     while (attempt < maxRetries) {
         try {
