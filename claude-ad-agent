@@ -30,14 +30,132 @@ const COSTS_TAB = 'Costs';
 
 // Claude models - with flexible fallback options
 const MODELS = {
-  // Primary options - using base model names for flexibility
-  'better': 'claude-3-opus',       // Higher quality
-  'cheaper': 'claude-3-sonnet',    // Less expensive, good balance
-  'fastest': 'claude-3-haiku',     // Fastest option
-  
-  // Additional fallbacks if needed
-  'latest_fallback': 'claude-3-sonnet', // Fallback to Sonnet
-  'classic_fallback': 'claude-3-haiku'  // Fallback to Haiku
+    // Primary options will be read from named ranges
+    'better': 'claude-3-opus-20240229',     // Default fallback
+    'cheaper': 'claude-3-sonnet-20240229',  // Default fallback
+    'fastest': 'claude-3-haiku-20240307',   // Default fallback
+    
+    // Additional fallbacks if needed
+    'latest_fallback': 'claude-3-sonnet-20240229',
+    'classic_fallback': 'claude-3-haiku-20240307'
+}
+
+// Add at the top with other constants
+const MODELS_CACHE_KEY = 'CLAUDE_MODELS_CACHE';
+const CACHE_DURATION_HOURS = 24;
+
+// Add this function to handle caching
+function getCachedModels(apiKey) {
+    const cache = CacheService.getScriptCache();
+    const cachedData = cache.get(MODELS_CACHE_KEY);
+    
+    if (cachedData) {
+        Logger.log('Using cached model versions');
+        return JSON.parse(cachedData);
+    }
+    
+    const models = getAvailableModels(apiKey);
+    if (models) {
+        cache.put(MODELS_CACHE_KEY, JSON.stringify(models), CACHE_DURATION_HOURS * 3600);
+    }
+    
+    return models;
+}
+
+// Add this new function
+async function getAvailableModels(apiKey) {
+    Logger.log('Checking available Claude models...');
+    
+    const url = 'https://api.anthropic.com/v1/models';
+    const headers = {
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01",
+        "Content-Type": "application/json"
+    };
+    
+    const options = {
+        "method": "GET",
+        "headers": headers,
+        "muteHttpExceptions": true
+    };
+    
+    try {
+        const response = UrlFetchApp.fetch(url, options);
+        const responseCode = response.getResponseCode();
+        const responseText = response.getContentText();
+        
+        if (responseCode !== 200) {
+            Logger.log(`Error getting models: ${responseText}`);
+            return null;
+        }
+        
+        const models = JSON.parse(responseText).data;
+        
+        // Filter and organize models by type
+        const availableModels = {
+            opus: models.filter(m => m.id.includes('opus')).sort().reverse()[0]?.id,
+            sonnet: models.filter(m => m.id.includes('sonnet')).sort().reverse()[0]?.id,
+            haiku: models.filter(m => m.id.includes('haiku')).sort().reverse()[0]?.id
+        };
+        
+        Logger.log('Available models:', availableModels);
+        return availableModels;
+    } catch (error) {
+        Logger.log('Error checking available models:', error);
+        return null;
+    }
+}
+
+// Modify the MODELS initialization
+function initializeModels(apiKey) {
+    // Default model versions in case API check fails
+    const defaultModels = {
+        'better': 'claude-3-opus-20240229',
+        'cheaper': 'claude-3-sonnet-20240229',
+        'fastest': 'claude-3-haiku-20240307'
+    };
+    
+    // Try to get latest available models
+    const availableModels = getAvailableModels(apiKey);
+    
+    if (!availableModels) {
+        Logger.log('Using default model versions');
+        return defaultModels;
+    }
+    
+    // Update MODELS with latest available versions
+    return {
+        'better': availableModels.opus || defaultModels.better,
+        'cheaper': availableModels.sonnet || defaultModels.cheaper,
+        'fastest': availableModels.haiku || defaultModels.fastest,
+        'latest_fallback': availableModels.sonnet || defaultModels.cheaper,
+        'classic_fallback': availableModels.haiku || defaultModels.fastest
+    };
+}
+
+function updateModelsFromSheet() {
+    Logger.log('Reading model versions from sheet...');
+    try {
+        // Try to read model versions from named ranges
+        const opusModel = readNamedRanges('opus_model_version');
+        const sonnetModel = readNamedRanges('sonnet_model_version');
+        const haikuModel = readNamedRanges('haiku_model_version');
+        
+        // Update MODELS if values exist
+        if (opusModel) MODELS['better'] = opusModel;
+        if (sonnetModel) MODELS['cheaper'] = sonnetModel;
+        if (haikuModel) MODELS['fastest'] = haikuModel;
+        
+        // Also update fallbacks
+        MODELS['latest_fallback'] = sonnetModel || MODELS['cheaper'];
+        MODELS['classic_fallback'] = haikuModel || MODELS['fastest'];
+        
+        Logger.log('Updated models from sheet:', MODELS);
+        return true;
+    } catch (error) {
+        Logger.log('Error reading model versions from sheet:', error);
+        return false;
+    }
 }
 
 function main() {
@@ -45,13 +163,33 @@ function main() {
     try {
         let start = new Date();
         
-        // Get the model choice from a named range or default to 'cheaper'
-        let modelChoice = readNamedRanges('model_choice') || 'cheaper'; 
+        // Update models from sheet first
+        updateModelsFromSheet();
         
-        // Make sure it's a valid option
-        if (!MODELS[modelChoice]) {
-            Logger.log(`Warning: Invalid model choice "${modelChoice}". Valid options are: ${Object.keys(MODELS).join(', ')}`);
-            modelChoice = 'cheaper'; // Fallback to cheaper if invalid
+        // Get API key
+        const apiKey = readNamedRanges('anthropicAPIkey');
+        if (!apiKey) {
+            throw new Error('API key not found in settings');
+        }
+        
+        // Get the model choice from named range
+        let modelChoice = readNamedRanges('model_choice');
+        Logger.log('Raw model choice from sheet:', modelChoice);
+        
+        // Check if the named range exists and has a value
+        let sheet = SpreadsheetApp.openByUrl(SHEET_URL);
+        let modelChoiceRange = sheet.getRangeByName('model_choice');
+        if (!modelChoiceRange) {
+            Logger.log('Warning: model_choice named range not found in sheet');
+        } else {
+            Logger.log('model_choice range address:', modelChoiceRange.getA1Notation());
+            Logger.log('model_choice range value:', modelChoiceRange.getValue());
+        }
+        
+        // Make sure it's a valid option and not null/empty
+        if (!modelChoice || !MODELS[modelChoice]) {
+            Logger.log(`Warning: Invalid or missing model choice "${modelChoice}". Valid options are: ${Object.keys(MODELS).join(', ')}`);
+            modelChoice = 'cheaper'; // Fallback to cheaper if invalid or missing
         }
         
         // Try to get the model, with fallback
@@ -64,7 +202,7 @@ function main() {
         const settings = {
             businessName: readNamedRanges('business_name'),
             businessType: readNamedRanges('business_type'), // Read from named range, with fallback
-            apiKey: readNamedRanges('anthropicAPIkey'),
+            apiKey: apiKey,
             modelChoice: modelChoice
         };
         Logger.log('Business Name: ' + settings.businessName);
@@ -122,9 +260,13 @@ function readNamedRanges(rangeName) {
         // Get all values in the range
         const values = range.getValues();
         
+        // Debug output
+        Logger.log(`Raw values from ${rangeName}:`, values);
+        
         // Settings and Prompts tabs have single-cell named ranges
         if (rangeName === 'business_name' || 
             rangeName === 'anthropicAPIkey' ||
+            rangeName === 'model_choice' ||  // Added model_choice here
             rangeName.includes('_prompt')) {
             Logger.log(`Reading single-cell value from ${rangeName}`);
             return values[0][0];
@@ -429,72 +571,26 @@ function formatArrayInput(input, type) {
 
 function callAnthropic(apiKey, prompt, context, modelInput) {
     // If we already found a working model, use it directly
-    // Otherwise, start with the requested model
     let model = SUCCESSFUL_MODEL || modelInput;
     
-    // If the model doesn't contain a date version and we don't have a successful model yet,
-    // log that we'll try to find the best available version
-    if (!model.includes("-202") && !SUCCESSFUL_MODEL) {
-        Logger.log(`Using base model name: ${model}. Will try to find the best available version.`);
-    } else if (SUCCESSFUL_MODEL) {
-        Logger.log(`Using previously successful model: ${model}`);
-    }
+    Logger.log(`Initial model request: ${model}`);
     
-    Logger.log(`Calling Anthropic API with model: ${model}`);
-    Logger.log(`Context preview: ${JSON.stringify(context).substring(0, 100)}...`);
-
     const maxRetries = 3;
     let attempt = 0;
-    let modelAttempts = [];
     
-    // Possible model versions to try (from newest to oldest)
-    const tryVersions = function(baseModelName) {
-        switch(baseModelName) {
-            case 'claude-3-opus':
-                return [
-                    'claude-3-opus-20240229',
-                    'claude-3-opus',
-                    'claude-3' // ultimate fallback
-                ];
-            case 'claude-3-sonnet':
-                return [
-                    'claude-3-7-sonnet-20250219', // newest if available
-                    'claude-3-5-sonnet-20240620',
-                    'claude-3-sonnet-20240229',
-                    'claude-3-sonnet',
-                    'claude-3' // ultimate fallback
-                ];
-            case 'claude-3-haiku':
-                return [
-                    'claude-3-5-haiku-20240620',
-                    'claude-3-haiku-20240307',
-                    'claude-3-haiku',
-                    'claude-3' // ultimate fallback
-                ];
-            default:
-                return [modelInput, 'claude-3']; // try as-is then fallback
-        }
-    };
-    
-    // If we already have a successful model, just use that
-    // Otherwise, set up the model attempts list
-    if (SUCCESSFUL_MODEL) {
-        modelAttempts = [SUCCESSFUL_MODEL, 'claude-3']; // first try the successful model, then fallback
-    } else if (model.includes("-202")) {
-        modelAttempts = [model, 'claude-3']; // try specified version, then fallback
-    } else {
-        modelAttempts = tryVersions(model);
-    }
-    
-    let modelIndex = 0;
+    // Define available models in order of preference
+    const availableModels = [
+        'claude-3-opus-20240229',
+        'claude-3-sonnet-20240229',
+        'claude-3-haiku-20240307'
+    ];
     
     while (attempt < maxRetries) {
         try {
-            // If we've failed previously, try the next model version
-            if (attempt > 0 && modelIndex < modelAttempts.length - 1) {
-                modelIndex++;
-                model = modelAttempts[modelIndex];
-                Logger.log(`Trying alternative model: ${model}`);
+            // If this isn't our first attempt, try the next model in the list
+            if (attempt > 0) {
+                model = availableModels[attempt - 1];
+                Logger.log(`Retrying with model: ${model}`);
             }
             
             // Anthropic Messages API endpoint
@@ -562,7 +658,7 @@ function callAnthropic(apiKey, prompt, context, modelInput) {
                     }
                     
                     // If we've exhausted all model options
-                    if (modelIndex >= modelAttempts.length - 1 && attempt === maxRetries - 1) {
+                    if (attempt === maxRetries - 1) {
                         throw new Error(`All model options failed. Last error: Model ${model} not found.`);
                     }
                     
@@ -873,18 +969,8 @@ function calculateCost(inputTokens, outputTokens, model) {
     const PRICING = {
         // Opus models
         'claude-3-opus-20240229': { inputCostPerMToken: 15, outputCostPerMToken: 75 },
-        'claude-3-opus': { inputCostPerMToken: 15, outputCostPerMToken: 75 },
-        
-        // Sonnet models
-        'claude-3-7-sonnet-20250219': { inputCostPerMToken: 3.8, outputCostPerMToken: 19 },
-        'claude-3-5-sonnet-20240620': { inputCostPerMToken: 3, outputCostPerMToken: 15 },
         'claude-3-sonnet-20240229': { inputCostPerMToken: 3, outputCostPerMToken: 15 },
-        'claude-3-sonnet': { inputCostPerMToken: 3, outputCostPerMToken: 15 },
-        
-        // Haiku models
-        'claude-3-5-haiku-20240620': { inputCostPerMToken: 0.25, outputCostPerMToken: 1.25 },
         'claude-3-haiku-20240307': { inputCostPerMToken: 0.25, outputCostPerMToken: 1.25 },
-        'claude-3-haiku': { inputCostPerMToken: 0.25, outputCostPerMToken: 1.25 },
         
         // Generic fallback
         'claude-3': { inputCostPerMToken: 3, outputCostPerMToken: 15 }
@@ -895,16 +981,11 @@ function calculateCost(inputTokens, outputTokens, model) {
     if (!modelPricing) {
         // Try to match the model by checking each part of the name
         if (model.includes('opus')) {
-            modelPricing = PRICING['claude-3-opus'];
+            modelPricing = PRICING['claude-3-opus-20240229'];
         } else if (model.includes('sonnet')) {
-            // Check if it's specifically Claude 3.7
-            if (model.includes('3-7')) {
-                modelPricing = PRICING['claude-3-7-sonnet-20250219'];
-            } else {
-                modelPricing = PRICING['claude-3-sonnet'];
-            }
+            modelPricing = PRICING['claude-3-sonnet-20240229'];
         } else if (model.includes('haiku')) {
-            modelPricing = PRICING['claude-3-haiku'];
+            modelPricing = PRICING['claude-3-haiku-20240307'];
         } else {
             Logger.log(`Warning: No pricing found for model ${model}, using default Claude pricing`);
             return ((inputTokens * 3) + (outputTokens * 15)) / 1000000; // Default to Sonnet pricing
