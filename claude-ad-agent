@@ -246,27 +246,22 @@ function main() {
 }
 
 function readNamedRanges(rangeName) {
-    Logger.log(`Reading named range: ${rangeName}`);
     try {
-        let sheet = SpreadsheetApp.openByUrl(SHEET_URL);
-        let range = sheet.getRangeByName(rangeName);
+        Logger.log(`Reading named range: ${rangeName}`);
+        const sheet = SpreadsheetApp.openByUrl(SHEET_URL);
+        const range = sheet.getRangeByName(rangeName);
         
         if (!range) {
-            Logger.log(`Warning: Named range '${rangeName}' not found`);
-            return null;
+            throw new Error(`Named range ${rangeName} not found`);
         }
-
-        // Get all values in the range
-        const values = range.getValues();
         
-        // Debug output
-        Logger.log(`Raw values from ${rangeName}:`, values);
+        const values = range.getValues();
+        Logger.log(`Raw values from ${rangeName}:`);
         
         // Handle model version ranges specifically
         if (rangeName.includes('_model_version')) {
             const value = values[0][0];
             Logger.log(`Model version value from ${rangeName}: ${value}`);
-            // Only return if we have a non-empty value
             return value && value.toString().trim() ? value : null;
         }
         
@@ -285,9 +280,10 @@ function readNamedRanges(rangeName) {
             .flat()
             .filter(value => value && value.toString().trim().length > 0)
             .join('\n');
-
+            
         Logger.log(`Successfully read value from ${rangeName}`);
         return content;
+        
     } catch (error) {
         Logger.log(`Error reading named range ${rangeName}: ${error}`);
         throw error;
@@ -345,7 +341,7 @@ function generateAdCopy(settings, prompts, inputs) {
         writeCritique('Headlines Critique', headlineCritique);
         totalTokens += critTokens;
         totalCost += critCost;
-        trackCost(critTokens, critCost, response);
+        trackCost(critTokens, critCost, response, 'Headlines');
 
         // Generate optimized headline prompt
         Logger.log('Generating optimized headline prompt');
@@ -362,14 +358,14 @@ function generateAdCopy(settings, prompts, inputs) {
         writeOptimizedPrompt('opt_headline_prompt', headlineOptPrompt);
         totalTokens += engTokens;
         totalCost += engCost;
-        trackCost(engTokens, engCost, response);
+        trackCost(engTokens, engCost, response, 'Headlines');
 
         // Parse the response and write to outputs
         const adCopy = parseResponse(response);
         writeOutputs(adCopy);
         totalTokens += tokens;
         totalCost += cost;
-        trackCost(tokens, cost, response);
+        trackCost(tokens, cost, response, 'Headlines');
 
         // Now generate descriptions
         Logger.log('Generating descriptions');
@@ -411,7 +407,7 @@ function generateAdCopy(settings, prompts, inputs) {
         writeCritique('Descriptions Critique', descCritique);
         totalTokens += descCritTokens;
         totalCost += descCritCost;
-        trackCost(descCritTokens, descCritCost, response);
+        trackCost(descCritTokens, descCritCost, response, 'Descriptions');
 
         // Generate optimized descriptions prompt
         Logger.log('Generating optimized descriptions prompt');
@@ -428,13 +424,13 @@ function generateAdCopy(settings, prompts, inputs) {
         writeOptimizedPrompt('opt_descriptions_prompt', descOptPrompt);
         totalTokens += descEngTokens;
         totalCost += descEngCost;
-        trackCost(descEngTokens, descEngCost, response);
+        trackCost(descEngTokens, descEngCost, response, 'Descriptions');
 
         const descriptions = parseDescriptions(descResponse);
         writeOutputs(descriptions);
         totalTokens += descTokens;
         totalCost += descCost;
-        trackCost(descTokens, descCost, response);
+        trackCost(descTokens, descCost, response, 'Descriptions');
 
         // Now generate web headlines
         Logger.log('Generating web headlines');
@@ -472,7 +468,7 @@ function generateAdCopy(settings, prompts, inputs) {
         writeCritique('Web Headlines Critique', webCritique);
         totalTokens += webCritTokens;
         totalCost += webCritCost;
-        trackCost(webCritTokens, webCritCost, response);
+        trackCost(webCritTokens, webCritCost, response, 'Web Headlines');
 
         // Generate optimized web headlines prompt
         Logger.log('Generating optimized web headlines prompt');
@@ -489,7 +485,7 @@ function generateAdCopy(settings, prompts, inputs) {
         writeOptimizedPrompt('opt_web_headlines_prompt', webOptPrompt);
         totalTokens += webEngTokens;
         totalCost += webEngCost;
-        trackCost(webEngTokens, webEngCost, response);
+        trackCost(webEngTokens, webEngCost, response, 'Web Headlines');
 
         // Parse the API response and update each item with 'Web Headline' category
         let webHeadlines = parseResponse(webResponse);
@@ -497,7 +493,7 @@ function generateAdCopy(settings, prompts, inputs) {
         writeOutputs(webHeadlines);
         totalTokens += webTokens;
         totalCost += webCost;
-        trackCost(webTokens, webCost, response);
+        trackCost(webTokens, webCost, response, 'Web Headlines');
 
         Logger.log(`Generation complete. Total tokens: ${totalTokens}, Total cost: $${totalCost.toFixed(4)}`);
         return { totalTokens, totalCost };
@@ -894,19 +890,22 @@ function parseDescriptions(response) {
     }
 }
 
-function trackCost(tokens, cost, response = null) {
+function trackCost(tokens, cost, response = null, outputType = '') {
     try {
         const sheet = SpreadsheetApp.openByUrl(SHEET_URL).getSheetByName(COSTS_TAB);
-        const timestamp = new Date().toISOString();
         
-        // Just track the essential metrics
+        // Use a simpler date format that doesn't need timezone
+        const now = new Date();
+        const timestamp = Utilities.formatDate(now, 'GMT', "dd/MM/yyyy HH:mm:ss");
+        
+        // Format data into columns matching the exact headers:
+        // Output | Total Tokens | Approx Cost of Report (USD) | Model Used | Time Stamp
         const rowData = [
-            timestamp,                                    // Column A: Timestamp
-            response?.model || GLOBAL_MODEL || '',        // Column B: Model used
-            response?.usage?.input_tokens || 0,          // Column C: Input tokens
-            response?.usage?.output_tokens || 0,         // Column D: Output tokens
-            tokens,                                      // Column E: Total tokens
-            cost.toFixed(4)                              // Column F: Total cost
+            outputType,                                  // Output
+            tokens,                                      // Total Tokens
+            cost.toFixed(4),                            // Approx Cost of Report (USD)
+            response?.model || GLOBAL_MODEL || '',       // Model Used
+            timestamp                                    // Time Stamp
         ];
         
         sheet.appendRow(rowData);
