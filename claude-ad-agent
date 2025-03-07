@@ -182,19 +182,34 @@ function main() {
             throw new Error('API key not found in settings');
         }
         
-        // Initialize model versions from sheet once
-        GLOBAL_MODEL_VERSIONS.better = readNamedRanges('opus_model_version');
-        GLOBAL_MODEL_VERSIONS.cheaper = readNamedRanges('sonnet_model_version');
-        GLOBAL_MODEL_VERSIONS.fastest = readNamedRanges('haiku_model_version');
-        
-        // Get model choice once
-        MODEL_CHOICE = readNamedRanges('model_choice') || 'cheaper'; // Default to cheaper if not set
-        
-        // Set the global model
-        GLOBAL_MODEL = GLOBAL_MODEL_VERSIONS[MODEL_CHOICE] || GLOBAL_MODEL_VERSIONS.cheaper;
+       // Get model choice first
+MODEL_CHOICE = readNamedRanges('model_choice') || 'cheaper'; // Default to cheaper if not set
+
+// Only read the version for the selected model
+let modelVersionRange;
+switch(MODEL_CHOICE) {
+    case 'better':
+        modelVersionRange = 'opus_model_version';
+        break;
+    case 'fastest':
+        modelVersionRange = 'haiku_model_version';
+        break;
+    default: // 'cheaper' or any other value
+        modelVersionRange = 'sonnet_model_version';
+        break;
+}
+
+// Set the global model directly
+GLOBAL_MODEL = readNamedRanges(modelVersionRange);
+if (!GLOBAL_MODEL) {
+    Logger.log('Warning: Model version not found, using default');
+    GLOBAL_MODEL = MODEL_CHOICE === 'better' ? 'claude-3-opus-20240229' :
+                  MODEL_CHOICE === 'fastest' ? 'claude-3-haiku-20240307' :
+                  'claude-3-sonnet-20240229';
+}
         
         Logger.log('Using model: ' + GLOBAL_MODEL);
-        Logger.log('Model choice: ' + MODEL_CHOICE);
+Logger.log('Model choice: ' + MODEL_CHOICE + ' (' + modelVersionRange + ')');
 
         // Get settings
         Logger.log('Reading settings');
