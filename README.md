@@ -1,8 +1,9 @@
-Modified this nifty script provided by GTA's as a copywriting agent to work with Anthropic's Claude. There's also enhanced version checking to ensure that you'll always have the most up-to-date version of each of the three models that I've added in.
+Modified this nifty script provided by GTAs that leveraged ChatGPT as a copywriting agent to work with Anthropic's Claude. 
+Claude's API wants specific versions when called so the sheet has a custom script to check for current versions of the 3 models I've included. Ensure that you've enabled that script and set up a recurring task for that at a cadance of your choosing to ensure that you'll always have the most up-to-date version of each of the three models.
 
-Your choices are:
+Your model choices are:
 Better - Opus
-Cheaper - Sonnet
+Cheaper - Sonnet (though this calls sonnet 3.7 which has enhanced reasoning so it's a pretty good option while being cheaper.)
 Fastest - Haiku
 
 Please be sure to input your Business Name and Business type in the main setup page, plus add your Anthropic API key in the field referenced. 
