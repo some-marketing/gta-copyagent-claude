@@ -47,6 +47,16 @@ const CACHE_DURATION_HOURS = 24;
 // Add at the top with other globals
 let CACHED_MODEL_VERSIONS = null;
 
+// Add at the top with other constants
+let GLOBAL_API_KEY = null;
+let GLOBAL_MODEL = null;
+let MODEL_CHOICE = null;
+let GLOBAL_MODEL_VERSIONS = {
+    'better': null,  // opus
+    'cheaper': null, // sonnet
+    'fastest': null  // haiku
+};
+
 // Add this function to handle caching
 function getCachedModels(apiKey) {
     const cache = CacheService.getScriptCache();
@@ -166,47 +176,33 @@ function main() {
     try {
         let start = new Date();
         
-        // Update models from sheet first
-        updateModelsFromSheet();
-        
-        // Get API key
-        const apiKey = readNamedRanges('anthropicAPIkey');
-        if (!apiKey) {
+        // Get API key once
+        GLOBAL_API_KEY = readNamedRanges('anthropicAPIkey');
+        if (!GLOBAL_API_KEY) {
             throw new Error('API key not found in settings');
         }
         
-        // Get the model choice from named range
-        let modelChoice = readNamedRanges('model_choice');
-        Logger.log('Raw model choice from sheet:', modelChoice);
+        // Initialize model versions from sheet once
+        GLOBAL_MODEL_VERSIONS.better = readNamedRanges('opus_model_version');
+        GLOBAL_MODEL_VERSIONS.cheaper = readNamedRanges('sonnet_model_version');
+        GLOBAL_MODEL_VERSIONS.fastest = readNamedRanges('haiku_model_version');
         
-        // Check if the named range exists and has a value
-        let sheet = SpreadsheetApp.openByUrl(SHEET_URL);
-        let modelChoiceRange = sheet.getRangeByName('model_choice');
-        if (!modelChoiceRange) {
-            Logger.log('Warning: model_choice named range not found in sheet');
-        } else {
-            Logger.log('model_choice range address:', modelChoiceRange.getA1Notation());
-            Logger.log('model_choice range value:', modelChoiceRange.getValue());
-        }
+        // Get model choice once
+        MODEL_CHOICE = readNamedRanges('model_choice') || 'cheaper'; // Default to cheaper if not set
         
-        // Make sure it's a valid option and not null/empty
-        if (!modelChoice || !MODELS[modelChoice]) {
-            Logger.log(`Warning: Invalid or missing model choice "${modelChoice}". Valid options are: ${Object.keys(MODELS).join(', ')}`);
-            modelChoice = 'cheaper'; // Fallback to cheaper if invalid or missing
-        }
+        // Set the global model
+        GLOBAL_MODEL = GLOBAL_MODEL_VERSIONS[MODEL_CHOICE] || GLOBAL_MODEL_VERSIONS.cheaper;
         
-        // Try to get the model, with fallback
-        let model = MODELS[modelChoice];
-        Logger.log('Using model: ' + model);
-        Logger.log('Model choice: ' + modelChoice);
+        Logger.log('Using model: ' + GLOBAL_MODEL);
+        Logger.log('Model choice: ' + MODEL_CHOICE);
 
         // Get settings
         Logger.log('Reading settings');
         const settings = {
             businessName: readNamedRanges('business_name'),
             businessType: readNamedRanges('business_type'), // Read from named range, with fallback
-            apiKey: apiKey,
-            modelChoice: modelChoice
+            apiKey: GLOBAL_API_KEY,
+            modelChoice: MODEL_CHOICE
         };
         Logger.log('Business Name: ' + settings.businessName);
         Logger.log('Business Type: ' + settings.businessType);
@@ -305,7 +301,7 @@ function generateAdCopy(settings, prompts, inputs) {
     
     let totalTokens = 0;
     let totalCost = 0;
-    const model = MODELS[settings.modelChoice];
+    const model = GLOBAL_MODEL;
 
     try {
         // Process headlines first
@@ -329,10 +325,8 @@ function generateAdCopy(settings, prompts, inputs) {
         Logger.log(`Using ${useOptHeadline ? 'optimized' : 'original'} headline prompt`);
 
         const { response, tokens, cost } = callAnthropic(
-            settings.apiKey,
             headlinePrompt,
-            headlineContext,
-            model
+            headlineContext
         );
 
         // Get critique for headlines
@@ -344,10 +338,8 @@ function generateAdCopy(settings, prompts, inputs) {
         };
         
         const { response: headlineCritique, tokens: critTokens, cost: critCost } = callAnthropic(
-            settings.apiKey,
             readNamedRanges('critique_prompt'),
-            headlineCritiqueContext,
-            model
+            headlineCritiqueContext
         );
         
         writeCritique('Headlines Critique', headlineCritique);
@@ -363,10 +355,8 @@ function generateAdCopy(settings, prompts, inputs) {
         };
         
         const { response: headlineOptPrompt, tokens: engTokens, cost: engCost } = callAnthropic(
-            settings.apiKey,
             readNamedRanges('engineer_prompt'),
-            headlineEngContext,
-            model
+            headlineEngContext
         );
         
         writeOptimizedPrompt('opt_headline_prompt', headlineOptPrompt);
@@ -401,10 +391,8 @@ function generateAdCopy(settings, prompts, inputs) {
         Logger.log(`Using ${useOptDescriptions ? 'optimized' : 'original'} descriptions prompt`);
 
         const { response: descResponse, tokens: descTokens, cost: descCost } = callAnthropic(
-            settings.apiKey,
             descriptionsPrompt,
-            descContext,
-            model
+            descContext
         );
 
         // Get critique for descriptions
@@ -416,10 +404,8 @@ function generateAdCopy(settings, prompts, inputs) {
         };
         
         const { response: descCritique, tokens: descCritTokens, cost: descCritCost } = callAnthropic(
-            settings.apiKey,
             readNamedRanges('critique_prompt'),
-            descCritiqueContext,
-            model
+            descCritiqueContext
         );
         
         writeCritique('Descriptions Critique', descCritique);
@@ -435,10 +421,8 @@ function generateAdCopy(settings, prompts, inputs) {
         };
         
         const { response: descOptPrompt, tokens: descEngTokens, cost: descEngCost } = callAnthropic(
-            settings.apiKey,
             readNamedRanges('engineer_prompt'),
-            descEngContext,
-            model
+            descEngContext
         );
         
         writeOptimizedPrompt('opt_descriptions_prompt', descOptPrompt);
@@ -468,10 +452,8 @@ function generateAdCopy(settings, prompts, inputs) {
         Logger.log(`Using ${useOptWebHeadlines ? 'optimized' : 'original'} web headlines prompt`);
 
         const { response: webResponse, tokens: webTokens, cost: webCost } = callAnthropic(
-            settings.apiKey,
             webHeadlinesPrompt,
-            webContext,
-            model
+            webContext
         );
 
         // Get critique for web headlines
@@ -483,10 +465,8 @@ function generateAdCopy(settings, prompts, inputs) {
         };
         
         const { response: webCritique, tokens: webCritTokens, cost: webCritCost } = callAnthropic(
-            settings.apiKey,
             readNamedRanges('critique_prompt'),
-            webCritiqueContext,
-            model
+            webCritiqueContext
         );
         
         writeCritique('Web Headlines Critique', webCritique);
@@ -502,10 +482,8 @@ function generateAdCopy(settings, prompts, inputs) {
         };
         
         const { response: webOptPrompt, tokens: webEngTokens, cost: webEngCost } = callAnthropic(
-            settings.apiKey,
             readNamedRanges('engineer_prompt'),
-            webEngContext,
-            model
+            webEngContext
         );
         
         writeOptimizedPrompt('opt_web_headlines_prompt', webOptPrompt);
@@ -580,62 +558,30 @@ function formatArrayInput(input, type) {
     return result;
 }
 
-function callAnthropic(apiKey, prompt, context, modelInput) {
-    // If we already found a working model, use it directly
-    let model = SUCCESSFUL_MODEL || modelInput;
-    
-    Logger.log(`Initial model request: ${model}`);
-    
-    const maxRetries = 3;
-    let attempt = 0;
-    
-    // Use cached model versions if available, otherwise read from sheet
-    if (!CACHED_MODEL_VERSIONS) {
-        Logger.log('Reading model versions from sheet...');
-        const opusVersion = readNamedRanges('opus_model_version');
-        const sonnetVersion = readNamedRanges('sonnet_model_version');
-        const haikuVersion = readNamedRanges('haiku_model_version');
-        
-        CACHED_MODEL_VERSIONS = [opusVersion, sonnetVersion, haikuVersion].filter(m => m);
-        
-        Logger.log('Updated models from sheet:');
-        Logger.log('Opus:', opusVersion);
-        Logger.log('Sonnet:', sonnetVersion);
-        Logger.log('Haiku:', haikuVersion);
-    }
-    
-    // Use cached versions or fallback to base models
-    const availableModels = CACHED_MODEL_VERSIONS.length > 0 ? 
-        CACHED_MODEL_VERSIONS : 
-        [
-            'claude-3-opus',
-            'claude-3-sonnet',
-            'claude-3-haiku'
-        ];
-    
-    Logger.log('Available models for fallback:', availableModels);
+function callAnthropic(prompt, context) {
+    const maxRetries = 3; // Define max number of retry attempts
+    let attempt = 0;      // Initialize attempt counter
     
     while (attempt < maxRetries) {
         try {
-            // If this isn't our first attempt, try the next model in the list
-            if (attempt > 0 && availableModels[attempt - 1]) {
-                model = availableModels[attempt - 1];
-                Logger.log(`Retrying with model: ${model}`);
-            }
+            // Use global model and API key
+            const model = GLOBAL_MODEL;
+            
+            Logger.log(`Using model: ${model}`);
             
             // Anthropic Messages API endpoint
             const url = 'https://api.anthropic.com/v1/messages';
             
-            // Construct the conversation
-            const system = prompt;
-            const userContent = JSON.stringify(context);
-            
             // Headers for Anthropic API
             const headers = {
-                "x-api-key": apiKey,
+                "x-api-key": GLOBAL_API_KEY,
                 "anthropic-version": "2023-06-01",
                 "Content-Type": "application/json"
             };
+            
+            // Construct the conversation
+            const system = prompt;
+            const userContent = JSON.stringify(context);
             
             // Payload for Anthropic API
             const payload = {
@@ -675,23 +621,9 @@ function callAnthropic(apiKey, prompt, context, modelInput) {
                 Logger.log(`Error: Anthropic API request failed with status ${responseCode}.`);
                 Logger.log(`Error details: ${responseText}`);
                 
-                // Check for specific error types and handle them
+                // Model not found error handling
                 if (responseText.includes("not_found_error") && 
                     responseText.includes("model:")) {
-                    
-                    Logger.log(`Model ${model} not found, will try alternatives if available.`);
-                    
-                    // If we used a previously successful model that's now failing, clear it
-                    if (model === SUCCESSFUL_MODEL) {
-                        Logger.log(`Previously successful model ${SUCCESSFUL_MODEL} is no longer working, clearing cache.`);
-                        SUCCESSFUL_MODEL = null;
-                    }
-                    
-                    // If we've exhausted all model options
-                    if (attempt === maxRetries - 1) {
-                        throw new Error(`All model options failed. Last error: Model ${model} not found.`);
-                    }
-                    
                     // Try next model right away without waiting
                     attempt++;
                     continue;
@@ -764,8 +696,6 @@ function callAnthropic(apiKey, prompt, context, modelInput) {
             };
 
         } catch (error) {
-            Logger.log(`Attempt ${attempt + 1} failed: ${error}`);
-            
             if (attempt === maxRetries - 1) {
                 throw error;
             }
@@ -969,21 +899,17 @@ function trackCost(tokens, cost, response = null) {
         const sheet = SpreadsheetApp.openByUrl(SHEET_URL).getSheetByName(COSTS_TAB);
         const timestamp = new Date().toISOString();
         
-        // Only store essential response data
-        const responseData = response ? {
-            model: response.model,
-            stop_reason: response.stop_reason,
-            usage: response.usage
-        } : null;
-        
-        const costData = [
-            timestamp,
-            tokens,
-            cost.toFixed(4),
-            responseData ? JSON.stringify(responseData) : ''
+        // Just track the essential metrics
+        const rowData = [
+            timestamp,                                    // Column A: Timestamp
+            response?.model || GLOBAL_MODEL || '',        // Column B: Model used
+            response?.usage?.input_tokens || 0,          // Column C: Input tokens
+            response?.usage?.output_tokens || 0,         // Column D: Output tokens
+            tokens,                                      // Column E: Total tokens
+            cost.toFixed(4)                              // Column F: Total cost
         ];
         
-        sheet.appendRow(costData);
+        sheet.appendRow(rowData);
         Logger.log(`Added cost tracking row: Tokens: ${tokens}, Cost: ${cost.toFixed(4)}`);
     } catch (error) {
         Logger.log(`Error writing to Costs tab: ${error}`);
