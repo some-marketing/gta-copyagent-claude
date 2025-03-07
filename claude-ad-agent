@@ -759,13 +759,15 @@ function parseResponse(response) {
     try {
         // Split into lines and filter out empty lines, headers, and separator lines
         const lines = response.split('\n')
-            .filter(line => {
-                const trimmedLine = line.trim();
-                return trimmedLine && 
-                    line.includes('|') && 
-                    !line.includes('Headline Text') &&
-                    !line.includes('----');
-            });
+           .filter(line => {
+    const trimmedLine = line.trim();
+    return trimmedLine && 
+        line.includes('|') && 
+        !line.toLowerCase().includes('headline text') &&
+        !line.toLowerCase().includes('description text') &&
+        !line.match(/^\s*[-|]+\s*$/) &&  // Filter out full separator lines
+        !line.match(/\|\s*-+\s*\|/);     // Filter out lines where any cell just contains dashes
+})
         
         Logger.log(`Found ${lines.length} lines after filtering`);
         
@@ -821,13 +823,14 @@ function parseDescriptions(response) {
     try {
         const lines = response.split('\n')
             .filter(line => {
-                const trimmedLine = line.trim();
-                return trimmedLine && 
-                       line.includes('|') && 
-                       !line.includes('Description') &&
-                       !line.includes('Headline Text') &&
-                       !line.includes('----');
-            });
+    const trimmedLine = line.trim();
+    return trimmedLine && 
+        line.includes('|') && 
+        !line.toLowerCase().includes('headline text') &&
+        !line.toLowerCase().includes('description text') &&
+        !line.match(/^\s*[-|]+\s*$/) &&  // Filter out full separator lines
+        !line.match(/\|\s*-+\s*\|/);     // Filter out lines where any cell just contains dashes
+})
         
         Logger.log(`Found ${lines.length} description lines after filtering`);
         
