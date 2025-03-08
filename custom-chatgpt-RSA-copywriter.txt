@@ -1,4 +1,4 @@
-If anyone has a paid version of Chat GPT, another great time saving method is to set up a customGPT with reference material in it's knowledgebase. The advantages of CustomGPTs is having an inbuilt prompt and knowledge base so they're purpose built and trained on the task you want them to do.
+If you have the paid web version of Chat GPT, another great time saving method is to set up a customGPT with reference material in it's knowledgebase. The advantages of CustomGPTs is having an inbuilt prompt and knowledge base so they're purpose built and trained on the task you want them to do.
 
 This prompt took me several iterations to get something that produced consistent results and I think my approach to revisions could be improved on so feel free to tweak it if it's not to your liking. 
 
