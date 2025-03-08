@@ -12,5 +12,18 @@ The script works like the original one featured on GTA otherwise, be sure you se
 </br>
 This video gives a rundown on the function of the script: https://www.youtube.com/watch?v=RhUwpsNNiFk</br>
 </br>
-Also as an added bonus I've included my Custom GPT/Claude Project prompts and knowledgebase configurations that I've been using to achieve this before this code came along. If you're paying for the front end of these systems leveraging their custom 
-AI systems for purpose built solutions to daily tasks are great.
+As an added bonus I've included my Custom GPT/Claude Project prompts and knowledgebase configurations that I had been using to write RSAs before this code came along. If you're paying for the front end of these systems leveraging their custom 
+AI systems for purpose built solutions to daily tasks are great.</br>
+</br>
+</br>
+</br>
+</br>
+</br>
+</br>
+</br>
+</br>
+</br>
+</br>
+Also fun fact: Apparently the web facing interface for ChatGPT uses your chat inputs to train it's model. Given the rising prevalence of AISEO, there's an opportunity to have AI Agents with a web browser log into the GPT web interface and talk up your company until it starts "ranking" or showing up when people ask about the product or service you provide. I've already had this happen with a couple of my clients while using the custom GPTs via web browser. This is not true of Claude currently.
+
+
